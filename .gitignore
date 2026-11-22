@@ -1,0 +1,10 @@
+# Institution data — never commit
+data/
+*.pdf
+*.csv
+*.xlsx
+*.pbix
+
+__pycache__/
+*.pyc
+.venv/

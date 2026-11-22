@@ -1,0 +1,183 @@
+// =====================================================
+// Power BI data model — DAX used in the dashboard
+// Source table: master_dataset (loaded from data/master_dataset.csv)
+// =====================================================
+
+
+// ---------- Calculated columns : master_dataset ----------
+
+// Section A / B, assigned by roll-number range
+Section =
+SWITCH(
+    TRUE(),
+    // Section B
+    (
+        master_dataset[RollNo] >= 2404169 &&
+        master_dataset[RollNo] <= 2404194
+    )
+    ||
+    (
+        master_dataset[RollNo] >= 2404201 &&
+        master_dataset[RollNo] <= 2404224
+    )
+    ||
+    master_dataset[RollNo] = 2305907,
+    "B",
+    // Everyone else
+    "A"
+)
+
+// Numeric order so semesters sort correctly
+SemesterOrder =
+SWITCH(
+    TRUE(),
+    master_dataset[Semester] = "Sem 1", 1,
+    master_dataset[Semester] = "Sem 2", 2,
+    master_dataset[Semester] = "Sem 3", 3,
+    master_dataset[Semester] = "Sem 4", 4,
+    BLANK()
+)
+
+// Readable result label
+Result Status =
+SWITCH(
+    master_dataset[Result],
+    "P", "Pass",
+    "R", "Retest",
+    "F", "Fail",
+    master_dataset[Result]
+)
+
+SemesterKey = master_dataset[RollNo] & "_" & master_dataset[Semester]
+
+
+// ---------- Measures : master_dataset ----------
+
+Total Students =
+DISTINCTCOUNT(master_dataset[RollNo])
+
+Passed Students =
+CALCULATE(
+    DISTINCTCOUNT(master_dataset[RollNo]),
+    master_dataset[Result] = "P"
+)
+
+Pass Percentage =
+VAR Passed =
+    CALCULATE(
+        DISTINCTCOUNT(master_dataset[RollNo]),
+        master_dataset[Result] = "P",
+        REMOVEFILTERS(master_dataset[Result])
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT(master_dataset[RollNo]),
+        REMOVEFILTERS(master_dataset[Result])
+    )
+RETURN
+    DIVIDE(Passed, Total)
+
+Student Rank =
+VAR CurrentSGPA =
+    MAX(master_dataset[SGPA])
+VAR RankingTable =
+    ADDCOLUMNS(
+        SUMMARIZE(
+            ALLSELECTED(master_dataset[RollNo], master_dataset[StudentName]),
+            master_dataset[RollNo],
+            master_dataset[StudentName]
+        ),
+        "SGPA",
+            CALCULATE(
+                MAX(master_dataset[SGPA]),
+                REMOVEFILTERS(master_dataset[StudentName])
+            )
+    )
+RETURN
+    RANKX(RankingTable, [SGPA], CurrentSGPA, DESC, DENSE)
+
+
+// ---------- Calculated table : one row per student per semester ----------
+
+Student_SGPA =
+SUMMARIZE(
+    master_dataset,
+    master_dataset[RollNo],
+    master_dataset[StudentName],
+    master_dataset[Semester],
+    master_dataset[SemesterOrder],
+    master_dataset[Section],
+    "SGPA", MAX(master_dataset[SGPA]),
+    "Result", MAX(master_dataset[Result])
+)
+
+// Calculated column
+SemesterKey = Student_SGPA[RollNo] & "_" & Student_SGPA[Semester]
+
+
+// ---------- Measures : Student_SGPA ----------
+
+Student Result =
+SWITCH(
+    SELECTEDVALUE(Student_SGPA[Result]),
+    "P", "Pass",
+    "F", "Fail",
+    "R", "Retest",
+    BLANK()
+)
+
+// Dense rank of the selected student by SGPA, among passed students
+// in the same semester and section
+Student Rank1 =
+VAR CurrentRoll = SELECTEDVALUE(Student_SGPA[RollNo])
+VAR RankTable =
+    FILTER(
+        ADDCOLUMNS(
+            SUMMARIZE(
+                FILTER(
+                    ALLEXCEPT(Student_SGPA, Student_SGPA[Semester], Student_SGPA[Section]),
+                    Student_SGPA[Result] = "P"
+                ),
+                Student_SGPA[RollNo]
+            ),
+            "AvgSGPA",
+            CALCULATE(
+                AVERAGE(Student_SGPA[SGPA]),
+                ALLEXCEPT(Student_SGPA, Student_SGPA[RollNo], Student_SGPA[Semester], Student_SGPA[Section])
+            )
+        ),
+        NOT ISBLANK([AvgSGPA])
+    )
+VAR CurrentAvgSGPA =
+    CALCULATE(
+        AVERAGE(Student_SGPA[SGPA]),
+        Student_SGPA[RollNo] = CurrentRoll
+    )
+RETURN
+    IF(
+        ISBLANK(CurrentRoll),
+        BLANK(),
+        RANKX(RankTable, [AvgSGPA], CurrentAvgSGPA, DESC, DENSE)
+    )
+
+// Size of the ranking pool (for "rank X of N")
+RankPoolCount =
+COUNTROWS(
+    FILTER(
+        ADDCOLUMNS(
+            SUMMARIZE(
+                FILTER(
+                    ALLEXCEPT(Student_SGPA, Student_SGPA[Semester], Student_SGPA[Section]),
+                    Student_SGPA[Result] = "P"
+                ),
+                Student_SGPA[RollNo]
+            ),
+            "AvgSGPA",
+            CALCULATE(
+                AVERAGE(Student_SGPA[SGPA]),
+                ALLEXCEPT(Student_SGPA, Student_SGPA[RollNo], Student_SGPA[Semester], Student_SGPA[Section])
+            )
+        ),
+        NOT ISBLANK([AvgSGPA])
+    )
+)
